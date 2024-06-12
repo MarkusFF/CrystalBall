@@ -2,6 +2,7 @@ import pygame
 import numpy as np
 import pygame.gfxdraw
 from numba import njit
+from scipy.spatial import distance
 
 # Initialize Pygame
 pygame.init()
@@ -60,6 +61,7 @@ def initialize_positions(num_balls, width, radius, ball_radius):
 
 positions = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
 velocities = np.zeros((NUM_BALLS, 2))
+colours = np.zeros(NUM_BALLS)
 
 # Grid size for spatial partitioning
 GRID_SIZE = 2 * BALL_RADIUS
@@ -77,9 +79,9 @@ def dot(a, b):
 def norm(a):
     return np.sqrt(a[0] * a[0] + a[1] * a[1])
 
-def draw_balls(screen, positions):
-    for pos in positions[:active]:
-        pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLUE)
+def draw_balls(screen, positions, colours):
+    for idx, pos in enumerate(positions[:active]):
+        pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx],255-colours[idx],255))
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
 
 @njit
@@ -217,6 +219,7 @@ clock = pygame.time.Clock()
 
 render_interval = 1000 // 60  # Milliseconds per frame
 last_time = pygame.time.get_ticks()
+i = 0
 
 while running:
     for event in pygame.event.get():
@@ -241,7 +244,7 @@ while running:
 
     # Calculate vibrating radius
     current_time = pygame.time.get_ticks()
-    vibrating_radius = RADIUS + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+    vibrating_radius = RADIUS # + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
 
     # Update and draw balls
     update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius)
@@ -254,12 +257,21 @@ while running:
         # Draw container
         pygame.gfxdraw.aacircle(screen, WIDTH // 2, HEIGHT // 2, int(vibrating_radius), RED)
 
+        if i % 10 == 0:
+            # Colour balls by nearest neighbour distances
+            # Select smallest six distances, then average
+            XX = distance.cdist(positions[:active+1], positions[:active+1], 'euclidean')
+            XX.sort()
+            colours = XX[:,1:7].mean(axis=1) - 2*BALL_RADIUS
+            colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
+        i += 1
+
         # Draw balls
-        draw_balls(screen, positions)
+        draw_balls(screen, positions, colours)
 
         pygame.display.flip()
 
     # Control the max tick rate for updating (if needed)
-    clock.tick(MAX_TICK_RATE)
+    # clock.tick(MAX_TICK_RATE)
 
 pygame.quit()
