@@ -27,7 +27,7 @@ WIDTH, HEIGHT = 800, 800
 RADIUS = 400  # Initial radius of the container
 BALL_RADIUS = 8  # Radius of the ball bearings
 NUM_BALLS = 5000  # Number of ball bearings
-GEN_BALLS = 500
+GEN_BALLS = 1500
 GRAVITY = USE_GRAVITY * 0.001  # Gravity constant
 REST_COEFF = 0.8  # Restitution coefficient
 FRICTION = 0.998  # Friction coefficient
@@ -36,8 +36,9 @@ REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0  # Strength of the repulsive force
 MAX_ATTEMPTS = 100
 VIBRATION_ANGLE = 0
 VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
-VIBRATION_FREQUENCY = 3  # Frequency of the boundary vibration
+VIBRATION_FREQUENCY = 2  # Frequency of the boundary vibration
 CAPTION = "Ball Bearing Simulation with NumPy and Numba"
+CAPTION_VIEWS = ("Hybrid view","Domains view","Defects and boundaries view")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -193,17 +194,6 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
             overlap = dist + BALL_RADIUS - radius
             positions[i, 0] -= overlap * normal[0]
             positions[i, 1] -= overlap * normal[1]
-    # for i in range(active):
-    #     dist = np.sqrt((positions[i, 0] - WIDTH // 2) ** 2 + (positions[i, 1] - HEIGHT // 2) ** 2)
-    #     if dist + BALL_RADIUS > radius:
-    #         normal = np.array([positions[i, 0] - WIDTH // 2, positions[i, 1] - HEIGHT // 2])
-    #         normal /= dist
-    #         vel_norm = dot(velocities[i], normal)
-    #         velocities[i] -= 2 * vel_norm * normal * REST_COEFF
-
-    #         overlap = dist + BALL_RADIUS - radius
-    #         positions[i, 0] -= overlap * normal[0]
-    #         positions[i, 1] -= overlap * normal[1]
 
     for i in range(num_cells_x):
         for j in range(num_cells_y):
@@ -267,15 +257,11 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                 closest_six = sorted(distances)[:6]
                 if len(closest_six) > 0:
                     avg_distance = sum(closest_six)/len(closest_six)    # average the nearest-neighbours' distances
-                    colours[ball1,1] = avg_distance - MIN_DISTANCE        # subtract the minimum distance to get the spacing
+                    colours[ball1,1] = avg_distance - MIN_DISTANCE      # subtract the minimum distance to get the spacing
                 else:
                     colours[ball1,1] = 1000   # default distance for isolated balls
 
-    # Normalise the colour scheme for the balls
-    # if show_angles:
-    #     colours = np.clip(colours * 255, 0 , 255)
-    # else:
-    #     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
+    # Store data for the colour scheme of each ball
     colours[:,0] = np.clip(colours[:,0] * 255, 0 , 255)
     colours[:,1] = np.clip(colours[:,1] / BALL_RADIUS * 2550, 0 , 255)
     return colours
@@ -290,13 +276,8 @@ def remove_ball(pos, positions):
             break
 
 def set_caption():
-    if show_angles == 0:
-        pygame.display.set_caption(CAPTION + " - Hybrid view")
-    elif show_angles == 1:
-        pygame.display.set_caption(CAPTION + " - Domains view")
-    elif show_angles == 2:
-        pygame.display.set_caption(CAPTION + " - Defects and boundaries view")
-
+    pygame.display.set_caption(CAPTION + " - " + CAPTION_VIEWS[show_angles])
+    
 # Initialize grid
 grid = np.zeros((NUM_CELLS_X, NUM_CELLS_Y, MAX_BALLS_PER_CELL), dtype=np.int32)
 grid_counts = np.zeros((NUM_CELLS_X, NUM_CELLS_Y), dtype=np.int32)
@@ -310,18 +291,11 @@ last_render_time = pygame.time.get_ticks()-1
 last_calculation_time = last_render_time
 i = 0
 
-# if JIT:
-    # update_positions = njit(parallel=True)(update_positions)
-    # reset_grid = njit(parallel=True)(reset_grid)
-    # dot = njit(dot)
-    # norm = njit(norm)
-    # apply_repulsive_force= njit(apply_repulsive_force)
-    # resolve_collision = njit(resolve_collision)
-
 render_FPS = 0
 calculation_FPS = 0
 t3 = time.time()
 print ("pre-loop", t3-t2)
+set_caption()
 while running:
     current_time = pygame.time.get_ticks()
     if i == 1:
@@ -376,7 +350,7 @@ while running:
     vibrating_position = (WIDTH // 2 + 5 * np.sin(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
 
     # Update and draw balls
-    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius, colours, show_angles)
+    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours, show_angles)
 
     if current_time - last_render_time >= render_interval:
         try:
