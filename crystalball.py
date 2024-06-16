@@ -113,7 +113,9 @@ def draw_balls(screen, positions, colours):
         heatmap[:active] = 0.9 * heatmap[:active] + np.sum(velocities[:active,:]**2, axis=1)
         # print(np.median(heatmap))
         # heatmap = np.clip(heatmap / np.median(heatmap) * 64, 0, 255)
-        heatmapB = np.clip(heatmap[:active] / 0.02 * 255, 0, 255)
+        heatmapB = np.clip(heatmap[:active] / 0.005 * 255, 0, 255)
+        heatmapR = np.clip(heatmap[:active] / 0.02 * 255, 0, 255)
+        heatmapG = np.clip(heatmap[:active] / 0.1 * 255, 0, 255)
 
     for idx, pos in enumerate(positions[:active]):
         if show_angles == 0:
@@ -125,7 +127,8 @@ def draw_balls(screen, positions, colours):
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,1],200-(colours[idx,1]*200)//255,255))
         elif show_angles == 3:
             # Heat map
-            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
+            # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapR[idx]),int(heatmapG[idx]),int(heatmapB[idx])))
         
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
 
