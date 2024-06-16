@@ -38,7 +38,8 @@ VIBRATION_ANGLE = 0
 VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
 VIBRATION_FREQUENCY = 2  # Frequency of the boundary vibration
 CAPTION = "Ball Bearing Simulation with NumPy and Numba"
-CAPTION_VIEWS = ("Hybrid view","Domains view","Defects and boundaries view")
+CAPTION_VIEWS = ("Hybrid view","Domains view","Defects and boundaries view","Heat map")
+NUM_VIEWS = 4
 
 # Colors
 WHITE = (255, 255, 255)
@@ -91,6 +92,7 @@ t2 = time.time()
 print ("post-init", t2-t1)
 velocities = np.zeros((NUM_BALLS, 2))
 colours = np.zeros((NUM_BALLS, 2))
+heatmap = np.zeros((NUM_BALLS))
 # Grid size for spatial partitioning
 GRID_SIZE = 2 * BALL_RADIUS
 NUM_CELLS_X = WIDTH // GRID_SIZE
@@ -106,13 +108,24 @@ def draw_grid():
             pygame.gfxdraw.filled_polygon(screen, ((GRID_SIZE*i,GRID_SIZE*j),(GRID_SIZE*(i+1),GRID_SIZE*j),(GRID_SIZE*(i+1),GRID_SIZE*(j+1)),(GRID_SIZE*i,GRID_SIZE*(j+1))),grid_colour)
 
 def draw_balls(screen, positions, colours):
+    global heatmap
+    if show_angles == 3:
+        heatmap[:active] = 0.9 * heatmap[:active] + np.sum(velocities[:active,:]**2, axis=1)
+        # print(np.median(heatmap))
+        # heatmap = np.clip(heatmap / np.median(heatmap) * 64, 0, 255)
+        heatmapB = np.clip(heatmap[:active] / 0.02 * 255, 0, 255)
+
     for idx, pos in enumerate(positions[:active]):
         if show_angles == 0:
-            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],colours[idx,0]))
+            # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],colours[idx,0]))
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],255-colours[idx,0]))
         elif show_angles == 1:
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,0],200-(colours[idx,0]*200)//255,255))
         elif show_angles == 2:
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,1],200-(colours[idx,1]*200)//255,255))
+        elif show_angles == 3:
+            # Heat map
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
         
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
 
@@ -331,11 +344,11 @@ while running:
                 remove_ball(pos, positions)
             elif event.button == 4:
                 show_angles += 1
-                show_angles = show_angles % 3
+                show_angles = show_angles % NUM_VIEWS
                 set_caption()
             elif event.button == 5:
                 show_angles -= 1
-                show_angles = show_angles % 3
+                show_angles = show_angles % NUM_VIEWS
                 set_caption()
 
     mouse_buttons = pygame.mouse.get_pressed()
