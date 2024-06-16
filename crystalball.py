@@ -1,3 +1,5 @@
+import time
+t0 = time.time()
 import pygame
 import numpy as np
 import pygame.gfxdraw
@@ -8,6 +10,14 @@ DRAW_GRID = False  # slow
 USE_GRAVITY = True
 BALLS_REPELL = True
 
+NJIT_PARALLEL = True
+NJIT_CACHE = True
+PRINT_FPS = True
+
+ENFORCE_MAX_CALCULATION_FPS = False
+MAX_TICK_RATE = 50  # Max tick rate for updating
+
+
 # Initialize Pygame
 pygame.init()
 
@@ -16,14 +26,13 @@ WIDTH, HEIGHT = 800, 800
 RADIUS = 400  # Initial radius of the container
 BALL_RADIUS = 8  # Radius of the ball bearings
 NUM_BALLS = 5000  # Number of ball bearings
-GEN_BALLS = 1500
+GEN_BALLS = 500
 GRAVITY = USE_GRAVITY * 0.001  # Gravity constant
 REST_COEFF = 0.8  # Restitution coefficient
 FRICTION = 0.998  # Friction coefficient
 MIN_DISTANCE = 2 * BALL_RADIUS  # Minimum distance between ball centers
 REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0  # Strength of the repulsive force
 MAX_ATTEMPTS = 100
-MAX_TICK_RATE = 5000  # Max tick rate for updating
 VIBRATION_ANGLE = 0
 VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
 VIBRATION_FREQUENCY = 3  # Frequency of the boundary vibration
@@ -39,34 +48,47 @@ active = 0
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Ball Bearing Simulation with NumPy and Numba")
 
-def is_valid_position(new_position, existing_positions, ball_radius, radius):
-    for pos in existing_positions:
-        if np.linalg.norm(new_position - pos) < ball_radius:
+@njit(cache=NJIT_CACHE)
+def dot(a, b):
+    return a[0] * b[0] + a[1] * b[1]
+
+@njit(cache=NJIT_CACHE)
+def norm(a):
+    return np.sqrt(a[0] * a[0] + a[1] * a[1])
+
+
+@njit(cache=NJIT_CACHE)
+def is_valid_position(new_position, existing_positions, active, ball_radius, radius):
+    for pos in existing_positions[:active]:
+        if norm(new_position - pos) < ball_radius:
             return False
-    return np.linalg.norm(new_position - np.array([WIDTH//2, HEIGHT//2])) < radius - ball_radius
+    return norm(new_position - np.array([WIDTH//2, HEIGHT//2])) < radius - ball_radius
 
+@njit(cache=NJIT_CACHE)
 def initialize_positions(num_balls, width, radius, ball_radius):
-    global active
-    positions = []
-
+    positions_np = np.zeros((NUM_BALLS,2), dtype = np.float32)
+    active = 0
     for _ in range(num_balls):
         attempts = 0
         while attempts < MAX_ATTEMPTS:
             new_position = (np.random.rand(2)) * (2 * (radius - ball_radius)) + (width // 2 - radius + ball_radius)
-            if is_valid_position(new_position, positions, ball_radius, radius):
-                positions.append(new_position)
+            if is_valid_position(new_position, positions_np, active, ball_radius, radius):
+                positions_np[active,:] = new_position
+                active += 1
                 break
             attempts += 1
         if attempts == MAX_ATTEMPTS:
-            active = len(positions)
-            print(f"found {active} good positions")
-            return np.vstack((np.array(positions), np.zeros((NUM_BALLS - active, 2))))
-    active = len(positions)
-    return np.vstack((np.array(positions), np.zeros((NUM_BALLS - active, 2))))
+            break
+    return positions_np, active
 
-positions = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
+t1 = time.time()
+print ("pre-init", t1-t0)
+positions, active = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
+t2 = time.time()
+print ("post-init", t2-t1)
 velocities = np.zeros((NUM_BALLS, 2))
 colours = np.zeros(NUM_BALLS)
+ 
 # Grid size for spatial partitioning
 GRID_SIZE = 2 * BALL_RADIUS
 NUM_CELLS_X = WIDTH // GRID_SIZE
@@ -74,12 +96,6 @@ NUM_CELLS_Y = HEIGHT // GRID_SIZE
 
 # Maximum number of balls that can be in one cell (arbitrary large number)
 MAX_BALLS_PER_CELL = 10
-
-def dot(a, b):
-    return a[0] * b[0] + a[1] * b[1]
-
-def norm(a):
-    return np.sqrt(a[0] * a[0] + a[1] * a[1])
 
 def draw_grid():
     for j in range(NUM_CELLS_Y):
@@ -92,6 +108,7 @@ def draw_balls(screen, positions, colours):
         pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx],200-(colours[idx]*200)//255,255))
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
 
+@njit(cache=NJIT_CACHE)
 def resolve_collision(pos1, vel1, pos2, vel2):
     normal = pos2 - pos1
     dist = norm(normal)
@@ -114,6 +131,7 @@ def resolve_collision(pos1, vel1, pos2, vel2):
 
     return vel1, vel2
 
+@njit(cache=NJIT_CACHE)
 def apply_repulsive_force(pos1, pos2, vel1, vel2, repulsive_force):
     normal = pos2 - pos1
     dist = norm(normal)
@@ -130,9 +148,11 @@ def apply_repulsive_force(pos1, pos2, vel1, vel2, repulsive_force):
     return vel1, vel2
 
 # Initialize grid with optimized resetting
-def reset_grid(grid_counts, num_cells_x, num_cells_y):
+@njit(parallel=NJIT_PARALLEL, cache=NJIT_CACHE)
+def reset_grid(grid_counts):
     grid_counts[:, :] = 0
 
+@njit(parallel=NJIT_PARALLEL, cache=NJIT_CACHE)
 def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, centre_pos, radius, colours):
 
     # Calculate velocity changes due to gravity and friction
@@ -142,7 +162,7 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
     # Move positions due to their new velocity
     positions[:active] += velocities[:active]
     
-    reset_grid(grid_counts, num_cells_x, num_cells_y)
+    reset_grid(grid_counts)
 
     # Calculate which grid cell each ball is located inside
     for i in range(active):
@@ -259,19 +279,38 @@ grid_counts = np.zeros((NUM_CELLS_X, NUM_CELLS_Y), dtype=np.int32)
 running = True
 clock = pygame.time.Clock()
 
-render_interval = 1000 // 60  # Milliseconds per frame
-last_time = pygame.time.get_ticks()
+render_interval = 1000 // 30  # Milliseconds per frame
+last_render_time = pygame.time.get_ticks()-1
+last_calculation_time = last_render_time
 i = 0
 
-if JIT:
-    update_positions = njit(parallel=True)(update_positions)
-    reset_grid = njit(parallel=True)(reset_grid)
-    dot = njit(dot)
-    norm = njit(norm)
-    apply_repulsive_force= njit(apply_repulsive_force)
-    resolve_collision = njit(resolve_collision)
+# if JIT:
+    # update_positions = njit(parallel=True)(update_positions)
+    # reset_grid = njit(parallel=True)(reset_grid)
+    # dot = njit(dot)
+    # norm = njit(norm)
+    # apply_repulsive_force= njit(apply_repulsive_force)
+    # resolve_collision = njit(resolve_collision)
 
+render_FPS = 0
+calculation_FPS = 0
+t3 = time.time()
+print ("pre-loop", t3-t2)
 while running:
+    current_time = pygame.time.get_ticks()
+    if i == 1:
+        print ("first loop", time.time() - t3)
+    if PRINT_FPS and i%100 == 1:
+        print (f"{calculation_FPS=}, {render_FPS=}")
+
+    i+=1
+    try:
+        fps = 1000/(current_time-last_calculation_time)
+        calculation_FPS = calculation_FPS*0.99+fps*0.01
+    except:
+        pass
+    last_calculation_time = current_time
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -299,16 +338,21 @@ while running:
             active += 1
 
     # Calculate vibrating radius
-    current_time = pygame.time.get_ticks()
     vibrating_radius = RADIUS #+ VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
     vibrating_position = (WIDTH // 2 + 5 * np.sin(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
 
     # Update and draw balls
     colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours)
 
-    if current_time - last_time >= render_interval:
-        last_time = current_time
+    if current_time - last_render_time >= render_interval:
+        try:
+            fps = 1000/(current_time-last_render_time)
+            render_FPS = render_FPS*0.9+fps*0.1
+        except:
+            pass
+        last_render_time = current_time
 
+        last_time = current_time
         screen.fill(WHITE)
         
         # Draw container
@@ -322,6 +366,7 @@ while running:
         pygame.display.flip()
 
     # Control the max tick rate for updating (if needed)
-    clock.tick(MAX_TICK_RATE)
+    if ENFORCE_MAX_CALCULATION_FPS:
+        clock.tick(MAX_TICK_RATE)
 
 pygame.quit()
