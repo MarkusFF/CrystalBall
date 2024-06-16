@@ -8,6 +8,7 @@ JIT = True
 DRAW_GRID = False  # slow
 USE_GRAVITY = True
 BALLS_REPELL = True
+show_angles = False
 
 # Initialize Pygame
 pygame.init()
@@ -133,7 +134,7 @@ def apply_repulsive_force(pos1, pos2, vel1, vel2, repulsive_force):
 def reset_grid(grid_counts, num_cells_x, num_cells_y):
     grid_counts[:, :] = 0
 
-def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, radius, colours):
+def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, radius, colours, show_angles):
     velocities[:, 1] += GRAVITY
     velocities *= FRICTION
     positions[:active] += velocities[:active]
@@ -190,6 +191,7 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
             for k in range(count):
                 ball1 = grid[i, j, k]
                 distances = []
+                angles = []
 
                 for l in range(count):
                     if l == k: continue
@@ -199,6 +201,7 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                     dy = positions[ball2, 1] - positions[ball1, 1]
                     distance = np.sqrt(dx ** 2 + dy ** 2)
                     distances.append(distance)
+                    angles.append(np.mod(np.arctan2(dx,dy),np.pi/3))
 
                     if l > k and distance < MIN_DISTANCE:
                         velocities[ball1], velocities[ball2] = resolve_collision(
@@ -216,6 +219,7 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                             dy = positions[ball2, 1] - positions[ball1, 1]
                             distance = np.sqrt(dx ** 2 + dy ** 2)
                             distances.append(distance)
+                            angles.append(np.mod(np.arctan2(dx,dy),np.pi/3))
                             if distance < MIN_DISTANCE:
                                 velocities[ball1], velocities[ball2] = resolve_collision(
                                     positions[ball1], velocities[ball1], positions[ball2], velocities[ball2]
@@ -223,13 +227,22 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                                 velocities[ball1], velocities[ball2] = apply_repulsive_force(
                                     positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
                                 )
-                closest_six = sorted(distances)[:6]
-                if len(closest_six) > 0:
-                    avg_distance = sum(closest_six)/len(closest_six)
-                    colours[ball1] = avg_distance - 2*BALL_RADIUS
+                if show_angles:
+                    if len(angles) > 0:
+                        colours[ball1] = sum(angles) / len(angles)
+                    else:
+                        colours[ball1] = 0
                 else:
-                    colours[ball1] = 1000
-    colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
+                    closest_six = sorted(distances)[:6]
+                    if len(closest_six) > 0:
+                        avg_distance = sum(closest_six)/len(closest_six)
+                        colours[ball1] = avg_distance - 2*BALL_RADIUS
+                    else:
+                        colours[ball1] = 1000
+    if show_angles:
+        colours = np.clip(colours * 255, 0 , 255)
+    else:
+        colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
     return colours
 
 
@@ -275,6 +288,8 @@ while running:
                         active += 1
             elif event.button == 3:  # Right mouse button
                 remove_ball(pos, positions)
+            elif event.button == 4 or event.button == 5:
+                show_angles = not show_angles
 
     mouse_buttons = pygame.mouse.get_pressed()
     if mouse_buttons[0]:  # Left mouse button is being held down
@@ -288,7 +303,7 @@ while running:
     vibrating_radius = RADIUS # + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
 
     # Update and draw balls
-    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius, colours)
+    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius, colours, show_angles)
 
     if current_time - last_time >= render_interval:
         last_time = current_time
