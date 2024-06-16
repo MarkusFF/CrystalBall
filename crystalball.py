@@ -2,7 +2,6 @@ import pygame
 import numpy as np
 import pygame.gfxdraw
 from numba import njit
-from scipy.spatial import distance
 
 JIT = True
 DRAW_GRID = False  # slow
@@ -21,11 +20,11 @@ GEN_BALLS = 1500
 GRAVITY = USE_GRAVITY * 0.001  # Gravity constant
 REST_COEFF = 0.8  # Restitution coefficient
 FRICTION = 0.998  # Friction coefficient
-MIN_DISTANCE = 2 * BALL_RADIUS  # Minimum distance between ball centers
-REPULSIVE_FORCE = BALLS_REPELL*0.85  # Strength of the repulsive force
+MIN_DISTANCE = 1.9 * BALL_RADIUS  # Minimum distance between ball centers
+REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0  # Strength of the repulsive force
 MAX_ATTEMPTS = 100
-MAX_TICK_RATE = 120  # Max tick rate for updating
-VIBRATION_AMPLITUDE = 3  # Amplitude of the boundary vibration
+MAX_TICK_RATE = 5000  # Max tick rate for updating
+VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
 VIBRATION_FREQUENCY = 3  # Frequency of the boundary vibration
 
 # Colors
@@ -161,24 +160,6 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
             positions[i, 0] -= overlap * normal[0]
             positions[i, 1] -= overlap * normal[1]
 
-    # for i in range(num_cells_x):
-    #     for j in range(num_cells_y):
-    #         count = grid_counts[i, j]
-    #         for k in range(count):
-    #             for l in range(k + 1, count):
-    #                 ball1 = grid[i, j, k]
-    #                 ball2 = grid[i, j, l]
-    #                 dx = positions[ball2, 0] - positions[ball1, 0]
-    #                 dy = positions[ball2, 1] - positions[ball1, 1]
-    #                 distance = np.sqrt(dx ** 2 + dy ** 2)
-    #                 if distance < MIN_DISTANCE:
-    #                     velocities[ball1], velocities[ball2] = resolve_collision(
-    #                         positions[ball1], velocities[ball1], positions[ball2], velocities[ball2]
-    #                     )
-    #                     velocities[ball1], velocities[ball2] = apply_repulsive_force(
-    #                         positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
-    #                     )
-
     for i in range(num_cells_x):
         for j in range(num_cells_y):
             neighbors = [
@@ -226,7 +207,8 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                 closest_six = sorted(distances)[:6]
                 if len(closest_six) > 0:
                     avg_distance = sum(closest_six)/len(closest_six)
-                    colours[ball1] = avg_distance - 2*BALL_RADIUS
+                    # colours[ball1] = avg_distance - 2*BALL_RADIUS
+                    colours[ball1] = avg_distance - MIN_DISTANCE
                 else:
                     colours[ball1] = 1000
     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
@@ -273,6 +255,11 @@ while running:
                     if is_valid_position(pos, positions[:active], BALL_RADIUS, RADIUS):
                         positions[active] = pos
                         active += 1
+            elif event.button == 2:  # Middle mouse button: Toggle vibration on and off
+                if VIBRATION_AMPLITUDE == 0:
+                    VIBRATION_AMPLITUDE = 1
+                else:
+                    VIBRATION_AMPLITUDE = 0
             elif event.button == 3:  # Right mouse button
                 remove_ball(pos, positions)
 
@@ -285,7 +272,7 @@ while running:
 
     # Calculate vibrating radius
     current_time = pygame.time.get_ticks()
-    vibrating_radius = RADIUS # + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+    vibrating_radius = RADIUS + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
 
     # Update and draw balls
     colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius, colours)
@@ -295,18 +282,8 @@ while running:
 
         screen.fill(WHITE)
         
-
         # Draw container
         pygame.gfxdraw.aacircle(screen, WIDTH // 2, HEIGHT // 2, int(vibrating_radius), RED)
-
-        # if i % 10 == 0:
-        #     # Colour balls by nearest neighbour distances
-        #     # Select smallest six distances, then average
-        #     XX = distance.cdist(positions[:active+1], positions[:active+1], 'euclidean')
-        #     XX.sort()
-        #     colours = XX[:,1:7].mean(axis=1) - 2*BALL_RADIUS
-        #     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
-        # i += 1
 
         # Draw balls
         draw_balls(screen, positions, colours)
@@ -316,6 +293,6 @@ while running:
         pygame.display.flip()
 
     # Control the max tick rate for updating (if needed)
-    # clock.tick(MAX_TICK_RATE)
+    clock.tick(MAX_TICK_RATE)
 
 pygame.quit()
