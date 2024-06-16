@@ -318,7 +318,7 @@ while running:
             pos = np.array(event.pos)
             if event.button == 1:  # Left mouse button
                 if active < NUM_BALLS:
-                    if is_valid_position(pos, positions[:active], BALL_RADIUS, RADIUS):
+                    if is_valid_position(pos, positions,active, BALL_RADIUS, RADIUS):
                         positions[active] = pos
                         active += 1
             elif event.button == 2:  # Middle mouse button: Toggle vibration on and off
@@ -333,7 +333,7 @@ while running:
     mouse_buttons = pygame.mouse.get_pressed()
     if mouse_buttons[0]:  # Left mouse button is being held down
         pos = pygame.mouse.get_pos()
-        if active < NUM_BALLS and is_valid_position(np.array(pos), positions[:active], BALL_RADIUS, RADIUS):
+        if active < NUM_BALLS and is_valid_position(np.array(pos), positions,active, BALL_RADIUS, RADIUS):
             positions[active] = pos
             active += 1
 
