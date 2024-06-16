@@ -2,7 +2,6 @@ import pygame
 import numpy as np
 import pygame.gfxdraw
 from numba import njit
-from scipy.spatial import distance
 
 JIT = True
 DRAW_GRID = False  # slow
@@ -22,10 +21,11 @@ GRAVITY = USE_GRAVITY * 0.001  # Gravity constant
 REST_COEFF = 0.8  # Restitution coefficient
 FRICTION = 0.998  # Friction coefficient
 MIN_DISTANCE = 2 * BALL_RADIUS  # Minimum distance between ball centers
-REPULSIVE_FORCE = BALLS_REPELL*0.85  # Strength of the repulsive force
+REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0  # Strength of the repulsive force
 MAX_ATTEMPTS = 100
-MAX_TICK_RATE = 120  # Max tick rate for updating
-VIBRATION_AMPLITUDE = 3  # Amplitude of the boundary vibration
+MAX_TICK_RATE = 5000  # Max tick rate for updating
+VIBRATION_ANGLE = 0
+VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
 VIBRATION_FREQUENCY = 3  # Frequency of the boundary vibration
 
 # Colors
@@ -133,13 +133,18 @@ def apply_repulsive_force(pos1, pos2, vel1, vel2, repulsive_force):
 def reset_grid(grid_counts, num_cells_x, num_cells_y):
     grid_counts[:, :] = 0
 
-def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, radius, colours):
+def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, centre_pos, radius, colours):
+
+    # Calculate velocity changes due to gravity and friction
     velocities[:, 1] += GRAVITY
     velocities *= FRICTION
+
+    # Move positions due to their new velocity
     positions[:active] += velocities[:active]
     
     reset_grid(grid_counts, num_cells_x, num_cells_y)
 
+    # Calculate which grid cell each ball is located inside
     for i in range(active):
         cell_x = int(positions[i, 0] / grid_size)
         cell_y = int(positions[i, 1] / grid_size)
@@ -149,10 +154,11 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                 grid[cell_x, cell_y, count] = i
                 grid_counts[cell_x, cell_y] += 1
 
+    # Calculate collisions with chamber walls
     for i in range(active):
-        dist = np.sqrt((positions[i, 0] - WIDTH // 2) ** 2 + (positions[i, 1] - HEIGHT // 2) ** 2)
+        dist = np.sqrt((positions[i, 0] - centre_pos[0]) ** 2 + (positions[i, 1] - centre_pos[1]) ** 2)
         if dist + BALL_RADIUS > radius:
-            normal = np.array([positions[i, 0] - WIDTH // 2, positions[i, 1] - HEIGHT // 2])
+            normal = np.array([positions[i, 0] - centre_pos[0], positions[i, 1] - centre_pos[1]])
             normal /= dist
             vel_norm = dot(velocities[i], normal)
             velocities[i] -= 2 * vel_norm * normal * REST_COEFF
@@ -160,24 +166,17 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
             overlap = dist + BALL_RADIUS - radius
             positions[i, 0] -= overlap * normal[0]
             positions[i, 1] -= overlap * normal[1]
+    # for i in range(active):
+    #     dist = np.sqrt((positions[i, 0] - WIDTH // 2) ** 2 + (positions[i, 1] - HEIGHT // 2) ** 2)
+    #     if dist + BALL_RADIUS > radius:
+    #         normal = np.array([positions[i, 0] - WIDTH // 2, positions[i, 1] - HEIGHT // 2])
+    #         normal /= dist
+    #         vel_norm = dot(velocities[i], normal)
+    #         velocities[i] -= 2 * vel_norm * normal * REST_COEFF
 
-    # for i in range(num_cells_x):
-    #     for j in range(num_cells_y):
-    #         count = grid_counts[i, j]
-    #         for k in range(count):
-    #             for l in range(k + 1, count):
-    #                 ball1 = grid[i, j, k]
-    #                 ball2 = grid[i, j, l]
-    #                 dx = positions[ball2, 0] - positions[ball1, 0]
-    #                 dy = positions[ball2, 1] - positions[ball1, 1]
-    #                 distance = np.sqrt(dx ** 2 + dy ** 2)
-    #                 if distance < MIN_DISTANCE:
-    #                     velocities[ball1], velocities[ball2] = resolve_collision(
-    #                         positions[ball1], velocities[ball1], positions[ball2], velocities[ball2]
-    #                     )
-    #                     velocities[ball1], velocities[ball2] = apply_repulsive_force(
-    #                         positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
-    #                     )
+    #         overlap = dist + BALL_RADIUS - radius
+    #         positions[i, 0] -= overlap * normal[0]
+    #         positions[i, 1] -= overlap * normal[1]
 
     for i in range(num_cells_x):
         for j in range(num_cells_y):
@@ -191,15 +190,16 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                 ball1 = grid[i, j, k]
                 distances = []
 
+                # Calculate collisions within grid cell
                 for l in range(count):
-                    if l == k: continue
-                    # ball1 = grid[i, j, k]
+                    if l == k: continue     # ignore current ball to avoid calculating self-collisions
                     ball2 = grid[i, j, l]
                     dx = positions[ball2, 0] - positions[ball1, 0]
                     dy = positions[ball2, 1] - positions[ball1, 1]
                     distance = np.sqrt(dx ** 2 + dy ** 2)
                     distances.append(distance)
 
+                    # Calculate collisions, avoiding repetition of those already calculated
                     if l > k and distance < MIN_DISTANCE:
                         velocities[ball1], velocities[ball2] = resolve_collision(
                             positions[ball1], velocities[ball1], positions[ball2], velocities[ball2]
@@ -207,6 +207,8 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                         velocities[ball1], velocities[ball2] = apply_repulsive_force(
                             positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
                         )
+
+                # Calculate collisions with neighbouring grid cells
                 for (nx, ny) in neighbors:
                     if 0 <= nx < num_cells_x and 0 <= ny < num_cells_y:
                         ncount = grid_counts[nx, ny]
@@ -216,6 +218,8 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                             dy = positions[ball2, 1] - positions[ball1, 1]
                             distance = np.sqrt(dx ** 2 + dy ** 2)
                             distances.append(distance)
+
+                            # Calculate collisions
                             if distance < MIN_DISTANCE:
                                 velocities[ball1], velocities[ball2] = resolve_collision(
                                     positions[ball1], velocities[ball1], positions[ball2], velocities[ball2]
@@ -223,12 +227,17 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                                 velocities[ball1], velocities[ball2] = apply_repulsive_force(
                                     positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
                                 )
+
+                # Get the nearest neighbours, up to six, and calculate the average nearest-neighbour distances.
+                # Choose the colour of each ball based on its average nearest-neighbour spacing.
                 closest_six = sorted(distances)[:6]
                 if len(closest_six) > 0:
-                    avg_distance = sum(closest_six)/len(closest_six)
-                    colours[ball1] = avg_distance - 2*BALL_RADIUS
+                    avg_distance = sum(closest_six)/len(closest_six)    # average the nearest-neighbours' distances
+                    colours[ball1] = avg_distance - MIN_DISTANCE        # subtract the minimum distance to get the spacing
                 else:
-                    colours[ball1] = 1000
+                    colours[ball1] = 1000   # default distance for isolated balls
+
+    # Normalise the colour scheme for the balls
     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
     return colours
 
@@ -273,6 +282,12 @@ while running:
                     if is_valid_position(pos, positions[:active], BALL_RADIUS, RADIUS):
                         positions[active] = pos
                         active += 1
+            elif event.button == 2:  # Middle mouse button: Toggle vibration on and off
+                if VIBRATION_AMPLITUDE == 0:
+                    VIBRATION_AMPLITUDE = 1
+                    VIBRATION_ANGLE = np.arctan2(pos[0]-WIDTH//2, pos[1]-HEIGHT//2)
+                else:
+                    VIBRATION_AMPLITUDE = 0
             elif event.button == 3:  # Right mouse button
                 remove_ball(pos, positions)
 
@@ -285,28 +300,19 @@ while running:
 
     # Calculate vibrating radius
     current_time = pygame.time.get_ticks()
-    vibrating_radius = RADIUS # + VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+    vibrating_radius = RADIUS #+ VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+    vibrating_position = (WIDTH // 2 + 5 * np.sin(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
 
     # Update and draw balls
-    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_radius, colours)
+    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours)
 
     if current_time - last_time >= render_interval:
         last_time = current_time
 
         screen.fill(WHITE)
         
-
         # Draw container
-        pygame.gfxdraw.aacircle(screen, WIDTH // 2, HEIGHT // 2, int(vibrating_radius), RED)
-
-        # if i % 10 == 0:
-        #     # Colour balls by nearest neighbour distances
-        #     # Select smallest six distances, then average
-        #     XX = distance.cdist(positions[:active+1], positions[:active+1], 'euclidean')
-        #     XX.sort()
-        #     colours = XX[:,1:7].mean(axis=1) - 2*BALL_RADIUS
-        #     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
-        # i += 1
+        pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
 
         # Draw balls
         draw_balls(screen, positions, colours)
@@ -316,6 +322,6 @@ while running:
         pygame.display.flip()
 
     # Control the max tick rate for updating (if needed)
-    # clock.tick(MAX_TICK_RATE)
+    clock.tick(MAX_TICK_RATE)
 
 pygame.quit()
