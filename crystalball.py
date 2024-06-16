@@ -8,7 +8,7 @@ JIT = True
 DRAW_GRID = False  # slow
 USE_GRAVITY = True
 BALLS_REPELL = True
-show_angles = False
+show_angles = 0
 
 # Initialize Pygame
 pygame.init()
@@ -28,6 +28,7 @@ MAX_ATTEMPTS = 100
 MAX_TICK_RATE = 120  # Max tick rate for updating
 VIBRATION_AMPLITUDE = 3  # Amplitude of the boundary vibration
 VIBRATION_FREQUENCY = 3  # Frequency of the boundary vibration
+CAPTION = "Ball Bearing Simulation with NumPy and Numba"
 
 # Colors
 WHITE = (255, 255, 255)
@@ -38,7 +39,7 @@ active = 0
 
 # Create the screen
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Ball Bearing Simulation with NumPy and Numba")
+pygame.display.set_caption(CAPTION)
 
 def is_valid_position(new_position, existing_positions, ball_radius, radius):
     for pos in existing_positions:
@@ -67,7 +68,7 @@ def initialize_positions(num_balls, width, radius, ball_radius):
 
 positions = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
 velocities = np.zeros((NUM_BALLS, 2))
-colours = np.zeros(NUM_BALLS)
+colours = np.zeros((NUM_BALLS, 2))
 # Grid size for spatial partitioning
 GRID_SIZE = 2 * BALL_RADIUS
 NUM_CELLS_X = WIDTH // GRID_SIZE
@@ -90,7 +91,13 @@ def draw_grid():
 
 def draw_balls(screen, positions, colours):
     for idx, pos in enumerate(positions[:active]):
-        pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx],200-(colours[idx]*200)//255,255))
+        if show_angles == 0:
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],colours[idx,0]))
+        elif show_angles == 1:
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,0],200-(colours[idx,0]*200)//255,255))
+        elif show_angles == 2:
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,1],200-(colours[idx,1]*200)//255,255))
+        
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
 
 def resolve_collision(pos1, vel1, pos2, vel2):
@@ -227,22 +234,22 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                                 velocities[ball1], velocities[ball2] = apply_repulsive_force(
                                     positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
                                 )
-                if show_angles:
-                    if len(angles) > 0:
-                        colours[ball1] = sum(angles) / len(angles)
-                    else:
-                        colours[ball1] = 0
+                if len(angles) > 0:
+                    colours[ball1,0] = sum(angles) / len(angles)
                 else:
-                    closest_six = sorted(distances)[:6]
-                    if len(closest_six) > 0:
-                        avg_distance = sum(closest_six)/len(closest_six)
-                        colours[ball1] = avg_distance - 2*BALL_RADIUS
-                    else:
-                        colours[ball1] = 1000
-    if show_angles:
-        colours = np.clip(colours * 255, 0 , 255)
-    else:
-        colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
+                    colours[ball1,0] = 0
+                closest_six = sorted(distances)[:6]
+                if len(closest_six) > 0:
+                    avg_distance = sum(closest_six)/len(closest_six)
+                    colours[ball1,1] = avg_distance - 2*BALL_RADIUS
+                else:
+                    colours[ball1,1] = 1000
+    # if show_angles:
+    #     colours = np.clip(colours * 255, 0 , 255)
+    # else:
+    #     colours = np.clip(colours / BALL_RADIUS * 2550, 0 , 255)
+    colours[:,0] = np.clip(colours[:,0] * 255, 0 , 255)
+    colours[:,1] = np.clip(colours[:,1] / BALL_RADIUS * 2550, 0 , 255)
     return colours
 
 
@@ -254,6 +261,13 @@ def remove_ball(pos, positions):
             active -= 1
             break
 
+def set_caption():
+    if show_angles == 0:
+        pygame.display.set_caption(CAPTION + " - Hybrid view")
+    elif show_angles == 1:
+        pygame.display.set_caption(CAPTION + " - Domains view")
+    elif show_angles == 2:
+        pygame.display.set_caption(CAPTION + " - Defects and boundaries view")
 
 # Initialize grid
 grid = np.zeros((NUM_CELLS_X, NUM_CELLS_Y, MAX_BALLS_PER_CELL), dtype=np.int32)
@@ -288,8 +302,14 @@ while running:
                         active += 1
             elif event.button == 3:  # Right mouse button
                 remove_ball(pos, positions)
-            elif event.button == 4 or event.button == 5:
-                show_angles = not show_angles
+            elif event.button == 4:
+                show_angles += 1
+                show_angles = show_angles % 3
+                set_caption()
+            elif event.button == 5:
+                show_angles -= 1
+                show_angles = show_angles % 3
+                set_caption()
 
     mouse_buttons = pygame.mouse.get_pressed()
     if mouse_buttons[0]:  # Left mouse button is being held down
