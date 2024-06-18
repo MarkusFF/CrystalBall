@@ -1,56 +1,213 @@
+"""Crystal Ball
+
+An educational ball-bearing simulation of crystal dynamics.
+"""
+
+# Standard library imports
 import time
-t0 = time.time()
+t0 = time.time()    # Initial timestamp
+
+# Third-party imports
 import pygame
-import numpy as np
 import pygame.gfxdraw
+import numpy as np
 from numba import njit
 
+# Performance config
 JIT = True
-DRAW_GRID = False  # slow
-USE_GRAVITY = True
-BALLS_REPELL = True
-show_angles = 0
-
 NJIT_PARALLEL = True
 NJIT_CACHE = True
 PRINT_FPS = True
-
 ENFORCE_MAX_CALCULATION_FPS = False
-MAX_TICK_RATE = 50  # Max tick rate for updating
-
-
-# Initialize Pygame
-pygame.init()
+MAX_TICK_RATE = 50                          # Max tick rate for updating
 
 # Constants
-WIDTH, HEIGHT = 800, 800
-RADIUS = 400  # Initial radius of the container
-BALL_RADIUS = 8  # Radius of the ball bearings
-NUM_BALLS = 5000  # Number of ball bearings
-GEN_BALLS = 1500
-GRAVITY = USE_GRAVITY * 0.001  # Gravity constant
-REST_COEFF = 0.8  # Restitution coefficient
-FRICTION = 0.998  # Friction coefficient
-MIN_DISTANCE = 2 * BALL_RADIUS  # Minimum distance between ball centers
-REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0  # Strength of the repulsive force
-MAX_ATTEMPTS = 100
-VIBRATION_ANGLE = 0
-VIBRATION_AMPLITUDE = 0  # Amplitude of the boundary vibration
-VIBRATION_FREQUENCY = 2  # Frequency of the boundary vibration
+WIDTH, HEIGHT = 800, 800                    # On-screen window dimensions
+RADIUS = 400                                # Initial radius of the container
+BALL_RADIUS = 12                            # Radius of the ball bearings
+NUM_BALLS = 5000                            # Maximum number of ball bearings
+GEN_BALLS = 700                             # How many balls to show at the beginning
+MAX_ATTEMPTS = 100                          # How many attempts to try to place each ball before moving on to the next
+MAX_BALLS_PER_CELL = 10                     # Maximum number of balls that can be in one cell of the grid (arbitrary large number)
+DRAW_GRID = False                           # Draw the grid? It's slow
+USE_GRAVITY = True                          # Simulate gravity?
+BALLS_REPELL = True                         # Simulate repulsive forces between balls?
+GRAVITY = USE_GRAVITY * 0.001               # Gravity constant
+REST_COEFF = 0.8                            # Restitution coefficient
+FRICTION = 0.998                            # Friction coefficient
+MIN_DISTANCE = 2 * BALL_RADIUS              # Minimum distance between ball centers
+REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0     # Strength of the repulsive force
+VIBRATION_AMPLITUDE = 1                     # Amplitude of the boundary vibration when switched on
+VIBRATION_FREQUENCY = 2                     # Frequency of the boundary vibration
 CAPTION = "Ball Bearing Simulation with NumPy and Numba"
 CAPTION_VIEWS = ("Hybrid view","Domains view","Defects and boundaries view","Heat map")
 NUM_VIEWS = 4
+HEATMAP_DECAY = 0.9                         # Retention coefficient to define the time-constant of the heatmap smoothing filter
+HEATMAP_SLOPES = (40, 10, 200)              # The colour map gradient for each colour channel in order: RGB
 
 # Colors
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
 BLUE = (150, 150, 255)
 BLACK = (0, 0, 0)
-active = 0
+
+# Grid size for spatial partitioning
+GRID_SIZE = 2 * BALL_RADIUS
+NUM_CELLS_X = WIDTH // GRID_SIZE
+NUM_CELLS_Y = HEIGHT // GRID_SIZE
+
+# Initialize Pygame
+pygame.init()
 
 # Create the screen
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption(CAPTION)
+
+def main():
+    
+    # State variables
+    active = 0              # Number of balls being simulated and displayed
+    show_angles = 0         # The view being shown at the beginning
+    vibration_angle = 0     # Angle/direction of the boundary vibration
+    vibration_amplitude = 0 # Amplitude of the boundary vibration
+    
+    # Allocate for variables carrying information for each ball
+    velocities = np.zeros((NUM_BALLS, 2))
+    colours = np.zeros((NUM_BALLS, 2))
+    heatmap = np.zeros((NUM_BALLS))
+
+    # Initialize grid
+    grid = np.zeros((NUM_CELLS_X, NUM_CELLS_Y, MAX_BALLS_PER_CELL), dtype=np.int32)
+    grid_counts = np.zeros((NUM_CELLS_X, NUM_CELLS_Y), dtype=np.int32)
+
+    # Initialize ball positions
+    t1 = time.time()
+    print ("pre-init", t1-t0)
+    positions, active = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
+    t2 = time.time()
+    print ("post-init", t2-t1)
+
+    # Main loop
+    running = True
+    clock = pygame.time.Clock()
+
+    render_interval = 1000 // 30  # Milliseconds per frame
+    last_render_time = pygame.time.get_ticks()-1
+    last_calculation_time = last_render_time
+
+    # Initialize performance counters
+    i = 0
+    render_FPS = 0
+    calculation_FPS = 0
+
+    # Update the window title to include the name of the starting view
+    set_caption(show_angles)
+
+    # Timestamp before starting the main loop
+    t3 = time.time()
+    print ("pre-loop", t3-t2)
+
+    # Main loop
+    while running:
+        current_time = pygame.time.get_ticks()              # Check the clock
+
+        if i == 1:
+            print ("first loop", time.time() - t3)          # Print the time of the first loop only
+        if PRINT_FPS and i%100 == 1:
+            print (f"{calculation_FPS=}, {render_FPS=}")    # Print frames per second for all other iterations
+
+        i += 1                                              # Increment loop counter
+
+        # Calculate frames per second for the behind-the-scenes calculations
+        try:
+            fps = 1000/(current_time-last_calculation_time)
+            calculation_FPS = calculation_FPS*0.99+fps*0.01
+        except:
+            pass
+
+        last_calculation_time = current_time                # Update timestamps
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                pos = np.array(event.pos)
+                if event.button == 1:  # Left mouse button                  : Add a new ball if mouse is in a valid position
+                    if active < NUM_BALLS:
+                        if is_valid_position(pos, positions,active, BALL_RADIUS, RADIUS):
+                            positions[active] = pos
+                            active += 1
+                elif event.button == 2:  # Middle mouse button              : Toggle vibration on and off
+                    if vibration_amplitude == 0:
+                        vibration_amplitude = VIBRATION_AMPLITUDE
+                        vibration_angle = np.arctan2(pos[0]-WIDTH//2, pos[1]-HEIGHT//2)
+                    else:
+                        vibration_amplitude = 0
+                elif event.button == 3:  # Right mouse button               : Remove a ball
+                    active = remove_ball(pos, positions, active)
+                elif event.button == 4:  # Scroll-wheel forwards/up         : Change view
+                    show_angles += 1
+                    show_angles = show_angles % NUM_VIEWS
+                    set_caption(show_angles)
+                elif event.button == 5:  # Scroll-wheel backwards/down      : Change view
+                    show_angles -= 1
+                    show_angles = show_angles % NUM_VIEWS
+                    set_caption(show_angles)
+
+        # Check which mouse buttons are being held down
+        mouse_buttons = pygame.mouse.get_pressed()
+        if mouse_buttons[0]:  # Left mouse button is being held down        : Add more balls!
+            pos = pygame.mouse.get_pos()
+            if active < NUM_BALLS and is_valid_position(np.array(pos), positions,active, BALL_RADIUS, RADIUS):
+                positions[active] = pos
+                active += 1
+
+        # Calculate vibrating radius
+        vibrating_radius = RADIUS #+ vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+        vibrating_position = (WIDTH // 2 + 5 * np.sin(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
+
+        # Update and draw balls
+        positions, velocities, colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours, show_angles)
+
+        # Accelerate performance by rendering the screen after several iterations of the calculations
+        if current_time - last_render_time >= render_interval:
+
+            # Calculate frames per second for the rendering
+            try:
+                fps = 1000/(current_time-last_render_time)
+                render_FPS = render_FPS*0.9+fps*0.1
+            except:
+                pass
+
+            # Update timestamps
+            last_render_time = current_time
+            # last_time = current_time
+
+            # Start drawing new screen
+            screen.fill(WHITE)
+            
+            # Draw container
+            pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
+
+            # Draw balls
+            heatmap = draw_balls(screen, positions, velocities, colours, heatmap, active, show_angles)
+
+            # Draw the grid onscreen (optional)
+            if DRAW_GRID:
+                draw_grid(grid_counts)
+
+            # Update the screen
+            pygame.display.flip()
+
+        # Control the max tick rate for updating (if needed)
+        if ENFORCE_MAX_CALCULATION_FPS:
+            clock.tick(MAX_TICK_RATE)
+
+    pygame.quit()
+
+
+###################################################################################################
+
 
 @njit(cache=NJIT_CACHE)
 def dot(a, b):
@@ -59,7 +216,6 @@ def dot(a, b):
 @njit(cache=NJIT_CACHE)
 def norm(a):
     return np.sqrt(a[0] * a[0] + a[1] * a[1])
-
 
 @njit(cache=NJIT_CACHE)
 def is_valid_position(new_position, existing_positions, active, ball_radius, radius):
@@ -85,52 +241,44 @@ def initialize_positions(num_balls, width, radius, ball_radius):
             break
     return positions_np, active
 
-t1 = time.time()
-print ("pre-init", t1-t0)
-positions, active = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
-t2 = time.time()
-print ("post-init", t2-t1)
-velocities = np.zeros((NUM_BALLS, 2))
-colours = np.zeros((NUM_BALLS, 2))
-heatmap = np.zeros((NUM_BALLS))
-# Grid size for spatial partitioning
-GRID_SIZE = 2 * BALL_RADIUS
-NUM_CELLS_X = WIDTH // GRID_SIZE
-NUM_CELLS_Y = HEIGHT // GRID_SIZE
-
-# Maximum number of balls that can be in one cell (arbitrary large number)
-MAX_BALLS_PER_CELL = 10
-
-def draw_grid():
+def draw_grid(grid_counts):
     for j in range(NUM_CELLS_Y):
         for i in range(NUM_CELLS_X):
             grid_colour = np.clip((255*grid_counts[i,j]//2, 0, (255*grid_counts[i,j]//2),128),0,255)
             pygame.gfxdraw.filled_polygon(screen, ((GRID_SIZE*i,GRID_SIZE*j),(GRID_SIZE*(i+1),GRID_SIZE*j),(GRID_SIZE*(i+1),GRID_SIZE*(j+1)),(GRID_SIZE*i,GRID_SIZE*(j+1))),grid_colour)
 
-def draw_balls(screen, positions, colours):
-    global heatmap
+def draw_balls(screen, positions, velocities, colours, heatmap, active, show_angles):
+    # For displaying the heatmap view:
     if show_angles == 3:
-        heatmap[:active] = 0.9 * heatmap[:active] + np.sum(velocities[:active,:]**2, axis=1)
-        # print(np.median(heatmap))
-        # heatmap = np.clip(heatmap / np.median(heatmap) * 64, 0, 255)
-        heatmapB = np.clip(heatmap[:active] / 0.005 * 255, 0, 255)
-        heatmapR = np.clip(heatmap[:active] / 0.02 * 255, 0, 255)
-        heatmapG = np.clip(heatmap[:active] / 0.1 * 255, 0, 255)
+        # Calculate a rolling average for the heatmap
+        heatmap[:active] = HEATMAP_DECAY * heatmap[:active] + np.sum(velocities[:active,:]**2, axis=1)
+        # Calculate ball colour scheme
+        heatmapR = np.clip(heatmap[:active] * HEATMAP_SLOPES[0] * 255, 0, 255)
+        heatmapG = np.clip(heatmap[:active] * HEATMAP_SLOPES[1] * 255, 0, 255)
+        heatmapB = np.clip(heatmap[:active] * HEATMAP_SLOPES[2] * 255, 0, 255)
 
+    # Draw each ball
     for idx, pos in enumerate(positions[:active]):
+        # Draw the fill of each ball dependent on view being displayed
         if show_angles == 0:
+            # "Hybrid" view of distance and angle combined
             # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],colours[idx,0]))
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],255-colours[idx,0]))
         elif show_angles == 1:
+            # Mean nearest six neighbour distance
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,0],200-(colours[idx,0]*200)//255,255))
         elif show_angles == 2:
+            # Crystal plane angle
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,1],200-(colours[idx,1]*200)//255,255))
         elif show_angles == 3:
             # Heat map
             # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapR[idx]),int(heatmapG[idx]),int(heatmapB[idx])))
         
+        # Draw ball outline
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
+    
+    return heatmap
 
 @njit(cache=NJIT_CACHE)
 def resolve_collision(pos1, vel1, pos2, vel2):
@@ -280,117 +428,20 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
     # Store data for the colour scheme of each ball
     colours[:,0] = np.clip(colours[:,0] * 255, 0 , 255)
     colours[:,1] = np.clip(colours[:,1] / BALL_RADIUS * 2550, 0 , 255)
-    return colours
+    return positions, velocities, colours
 
-
-def remove_ball(pos, positions):
-    global active
+def remove_ball(pos, positions, active):
     for i in range(active):
         if np.linalg.norm(positions[i] - pos) < BALL_RADIUS:
             positions[i] = positions[active - 1]  # Replace with the last active ball
             active -= 1
             break
+    return active
 
-def set_caption():
+def set_caption(show_angles):
     pygame.display.set_caption(CAPTION + " - " + CAPTION_VIEWS[show_angles])
-    
-# Initialize grid
-grid = np.zeros((NUM_CELLS_X, NUM_CELLS_Y, MAX_BALLS_PER_CELL), dtype=np.int32)
-grid_counts = np.zeros((NUM_CELLS_X, NUM_CELLS_Y), dtype=np.int32)
 
-# Main loop
-running = True
-clock = pygame.time.Clock()
+###################################################################################################
 
-render_interval = 1000 // 30  # Milliseconds per frame
-last_render_time = pygame.time.get_ticks()-1
-last_calculation_time = last_render_time
-i = 0
-
-render_FPS = 0
-calculation_FPS = 0
-t3 = time.time()
-print ("pre-loop", t3-t2)
-set_caption()
-while running:
-    current_time = pygame.time.get_ticks()
-    if i == 1:
-        print ("first loop", time.time() - t3)
-    if PRINT_FPS and i%100 == 1:
-        print (f"{calculation_FPS=}, {render_FPS=}")
-
-    i+=1
-    try:
-        fps = 1000/(current_time-last_calculation_time)
-        calculation_FPS = calculation_FPS*0.99+fps*0.01
-    except:
-        pass
-    last_calculation_time = current_time
-
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            pos = np.array(event.pos)
-            if event.button == 1:  # Left mouse button
-                if active < NUM_BALLS:
-                    if is_valid_position(pos, positions,active, BALL_RADIUS, RADIUS):
-                        positions[active] = pos
-                        active += 1
-            elif event.button == 2:  # Middle mouse button: Toggle vibration on and off
-                if VIBRATION_AMPLITUDE == 0:
-                    VIBRATION_AMPLITUDE = 1
-                    VIBRATION_ANGLE = np.arctan2(pos[0]-WIDTH//2, pos[1]-HEIGHT//2)
-                else:
-                    VIBRATION_AMPLITUDE = 0
-            elif event.button == 3:  # Right mouse button
-                remove_ball(pos, positions)
-            elif event.button == 4:
-                show_angles += 1
-                show_angles = show_angles % NUM_VIEWS
-                set_caption()
-            elif event.button == 5:
-                show_angles -= 1
-                show_angles = show_angles % NUM_VIEWS
-                set_caption()
-
-    mouse_buttons = pygame.mouse.get_pressed()
-    if mouse_buttons[0]:  # Left mouse button is being held down
-        pos = pygame.mouse.get_pos()
-        if active < NUM_BALLS and is_valid_position(np.array(pos), positions,active, BALL_RADIUS, RADIUS):
-            positions[active] = pos
-            active += 1
-
-    # Calculate vibrating radius
-    vibrating_radius = RADIUS #+ VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
-    vibrating_position = (WIDTH // 2 + 5 * np.sin(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(VIBRATION_ANGLE) * VIBRATION_AMPLITUDE * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
-
-    # Update and draw balls
-    colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours, show_angles)
-
-    if current_time - last_render_time >= render_interval:
-        try:
-            fps = 1000/(current_time-last_render_time)
-            render_FPS = render_FPS*0.9+fps*0.1
-        except:
-            pass
-        last_render_time = current_time
-
-        last_time = current_time
-        screen.fill(WHITE)
-        
-        # Draw container
-        pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
-
-        # Draw balls
-        draw_balls(screen, positions, colours)
-        if DRAW_GRID:
-            draw_grid()
-
-        pygame.display.flip()
-
-    # Control the max tick rate for updating (if needed)
-    if ENFORCE_MAX_CALCULATION_FPS:
-        clock.tick(MAX_TICK_RATE)
-
-pygame.quit()
+if __name__ == "__main__":
+    main()
