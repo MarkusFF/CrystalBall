@@ -14,7 +14,6 @@ import numpy as np
 from numba import njit
 
 # Performance config
-JIT = True
 NJIT_PARALLEL = True
 NJIT_CACHE = True
 PRINT_FPS = True
@@ -64,13 +63,13 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption(CAPTION)
 
 def main():
-    
+
     # State variables
     active = 0              # Number of balls being simulated and displayed
     show_angles = 0         # The view being shown at the beginning
     vibration_angle = 0     # Angle/direction of the boundary vibration
     vibration_amplitude = 0 # Amplitude of the boundary vibration
-    
+
     # Allocate for variables carrying information for each ball
     velocities = np.zeros((NUM_BALLS, 2))
     colours = np.zeros((NUM_BALLS, 2))
@@ -185,7 +184,7 @@ def main():
 
             # Start drawing new screen
             screen.fill(WHITE)
-            
+
             # Draw container
             pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
 
@@ -274,10 +273,10 @@ def draw_balls(screen, positions, velocities, colours, heatmap, active, show_ang
             # Heat map
             # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapR[idx]),int(heatmapG[idx]),int(heatmapB[idx])))
-        
+
         # Draw ball outline
         pygame.gfxdraw.aacircle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, BLACK)
-    
+
     return heatmap
 
 @njit(cache=NJIT_CACHE)
@@ -333,7 +332,7 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
 
     # Move positions due to their new velocity
     positions[:active] += velocities[:active]
-    
+
     reset_grid(grid_counts)
 
     # Calculate which grid cell each ball is located inside
