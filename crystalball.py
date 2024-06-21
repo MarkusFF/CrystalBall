@@ -67,7 +67,8 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(CAPTION)
 
-    container = Boundary(radius=WIDTH//2 - BORDER)    # Initial radius of the container
+    container = BoundaryCircle(radius=WIDTH//2 - BORDER)    # Initial radius of the container
+    #container = BoundarySquare(radius=WIDTH//2 - BORDER)    # Initial radius of the container
 
     # State variables
     active = 0              # Number of balls being simulated and displayed
@@ -212,44 +213,38 @@ def main():
 
 ###################################################################################################
 
-# @jitclass
-# class BoundaryCircle:
-#     anchor: typing.Tuple[float, float]
-#     centre: typing.Tuple[float, float]
-#     radius: float
-
-#     def __init__(self, radius):
-#         self.centre = (WIDTH // 2, HEIGHT // 2)
-#         self.anchor = self.centre
-#         self.radius = radius
-
-#     def is_valid_position(self, new_position, existing_positions, active, ball_radius):
-#         for pos in existing_positions[:active]:
-#             if norm(new_position - pos) < ball_radius:
-#                 return False
-#         return norm(new_position - np.array([self.centre[0], self.centre[1]])) < self.radius - ball_radius
-#         # return norm((new_position[0] - self.centre[0],new_position[1] - self.centre[1])) < self.radius - ball_radius
-    
-#     def get_new_position(self, ball_radius):
-#         return np.random.rand(2) * (2 * (self.radius - ball_radius)) + (self.centre[0] - self.radius + ball_radius)
-    
-#     def distance_outside(self, position):
-#         return np.sqrt((position[0] - self.centre[0]) ** 2 + (position[1] - self.centre[1]) ** 2) - self.radius
-
-#     def is_outside(self, position, ball_radius):
-#         return self.distance_outside(position) + ball_radius > 0
-    
-#     def normal(self, position):
-#         normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
-#         return normal / (self.distance_outside(position) + self.radius)
-
-
-# def draw_boundary(screen, bound):
-#     pygame.gfxdraw.aacircle(screen, int(bound.centre[0]), int(bound.centre[1]), int(bound.radius), RED)
-
-# Try a square boundary
 @jitclass
-class Boundary:
+class BoundaryCircle:
+    anchor: typing.Tuple[float, float]
+    centre: typing.Tuple[float, float]
+    radius: float
+
+    def __init__(self, radius):
+        self.centre = (WIDTH // 2, HEIGHT // 2)
+        self.anchor = self.centre
+        self.radius = radius
+
+    def is_valid_position(self, new_position, existing_positions, active, ball_radius):
+        for pos in existing_positions[:active]:
+            if norm(new_position - pos) < ball_radius:
+                return False
+        return norm(new_position - np.array([self.centre[0], self.centre[1]])) < self.radius - ball_radius
+    
+    def get_new_position(self, ball_radius):
+        return np.random.rand(2) * (2 * (self.radius - ball_radius)) + (self.centre[0] - self.radius + ball_radius)
+    
+    def distance_outside(self, position):
+        return np.sqrt((position[0] - self.centre[0]) ** 2 + (position[1] - self.centre[1]) ** 2) - self.radius
+
+    def is_outside(self, position, ball_radius):
+        return self.distance_outside(position) + ball_radius > 0
+    
+    def normal(self, position):
+        normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
+        return normal / (self.distance_outside(position) + self.radius)
+
+@jitclass
+class BoundarySquare:
     anchor: typing.Tuple[float, float]
     centre: typing.Tuple[float, float]
     radius: float
@@ -270,22 +265,25 @@ class Boundary:
     
     def distance_outside(self, position):
         vector_outside = np.maximum(abs(position[0] - self.centre[0]),abs(position[1] - self.centre[1]))
-        # print(vector_outside - self.radius)
         return vector_outside - self.radius
 
     def is_outside(self, position, ball_radius):
-        #return (ball_radius - self.radius < (self.centre[0] - position[0]) < self.radius - ball_radius) and (ball_radius - self.radius < (self.centre[1] - position[1]) < self.radius - ball_radius)
-        # print(self.distance_outside(position) + ball_radius > 0)
         return self.distance_outside(position) + ball_radius > 0
     
     def normal(self, position):
         normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
         return normal / (self.distance_outside(position) + self.radius)
 
-
+# Using a separate function outside the boundary class(es) because of clash with numba compilation
 def draw_boundary(screen, bound):
-    rectangle = pygame.Rect(bound.centre[0]-bound.radius, bound.centre[1]-bound.radius, 2*bound.radius, 2*bound.radius)
-    pygame.gfxdraw.rectangle(screen, rectangle, RED)
+    if isinstance(bound, BoundarySquare):
+        rectangle = pygame.Rect(bound.centre[0]-bound.radius, bound.centre[1]-bound.radius, 2*bound.radius, 2*bound.radius)
+        pygame.gfxdraw.rectangle(screen, rectangle, RED)
+    elif isinstance(bound, BoundaryCircle):
+        pygame.gfxdraw.aacircle(screen, int(bound.centre[0]), int(bound.centre[1]), int(bound.radius), RED)
+    else:
+        # Don't do anything if this class not implemented yet
+        pass
 
 
 ###################################################################################################
