@@ -4,6 +4,7 @@ An educational ball-bearing simulation of crystal dynamics.
 """
 
 # Standard library imports
+import typing
 import time
 t0 = time.time()    # Initial timestamp
 
@@ -12,6 +13,7 @@ import pygame
 import pygame.gfxdraw
 import numpy as np
 from numba import njit
+from numba.experimental import jitclass
 
 # Performance config
 NJIT_PARALLEL = True
@@ -55,14 +57,16 @@ GRID_SIZE = 2 * BALL_RADIUS
 NUM_CELLS_X = WIDTH // GRID_SIZE
 NUM_CELLS_Y = HEIGHT // GRID_SIZE
 
-# Initialize Pygame
-pygame.init()
-
-# Create the screen
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption(CAPTION)
-
 def main():
+
+    # Initialize Pygame
+    pygame.init()
+
+    # Create the screen
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption(CAPTION)
+
+    container = Boundary()
 
     # State variables
     active = 0              # Number of balls being simulated and displayed
@@ -82,7 +86,7 @@ def main():
     # Initialize ball positions
     t1 = time.time()
     print ("pre-init", t1-t0)
-    positions, active = initialize_positions(GEN_BALLS, WIDTH, RADIUS, BALL_RADIUS)
+    positions, active = initialize_positions(GEN_BALLS, BALL_RADIUS, container)
     t2 = time.time()
     print ("post-init", t2-t1)
 
@@ -133,13 +137,13 @@ def main():
                 pos = np.array(event.pos)
                 if event.button == 1:  # Left mouse button                  : Add a new ball if mouse is in a valid position
                     if active < NUM_BALLS:
-                        if is_valid_position(pos, positions,active, BALL_RADIUS, RADIUS):
+                        if container.is_valid_position(pos, positions, active, BALL_RADIUS):
                             positions[active] = pos
                             active += 1
                 elif event.button == 2:  # Middle mouse button              : Toggle vibration on and off
                     if vibration_amplitude == 0:
                         vibration_amplitude = VIBRATION_AMPLITUDE
-                        vibration_angle = np.arctan2(pos[0]-WIDTH//2, pos[1]-HEIGHT//2)
+                        vibration_angle = np.arctan2(pos[0]-container.centre[0], pos[1]-container.centre[1])
                     else:
                         vibration_amplitude = 0
                 elif event.button == 3:  # Right mouse button               : Remove a ball
@@ -155,18 +159,20 @@ def main():
 
         # Check which mouse buttons are being held down
         mouse_buttons = pygame.mouse.get_pressed()
+        
         if mouse_buttons[0]:  # Left mouse button is being held down        : Add more balls!
             pos = pygame.mouse.get_pos()
-            if active < NUM_BALLS and is_valid_position(np.array(pos), positions,active, BALL_RADIUS, RADIUS):
+            if active < NUM_BALLS and container.is_valid_position(pos, positions, active, BALL_RADIUS):
                 positions[active] = pos
                 active += 1
 
         # Calculate vibrating radius
-        vibrating_radius = RADIUS #+ vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
-        vibrating_position = (WIDTH // 2 + 5 * np.sin(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), HEIGHT // 2 + 5 * np.cos(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
+        # vibrating_radius = RADIUS #+ vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001)
+        vibrating_position = (container.anchor[0] + 5 * np.sin(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001), container.anchor[1] + 5 * np.cos(vibration_angle) * vibration_amplitude * np.sin(VIBRATION_FREQUENCY * current_time * 0.001))
+        container.centre = vibrating_position
 
         # Update and draw balls
-        positions, velocities, colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, vibrating_position, vibrating_radius, colours, show_angles)
+        positions, velocities, colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, container, colours, show_angles)
 
         # Accelerate performance by rendering the screen after several iterations of the calculations
         if current_time - last_render_time >= render_interval:
@@ -180,20 +186,21 @@ def main():
 
             # Update timestamps
             last_render_time = current_time
-            # last_time = current_time
 
             # Start drawing new screen
             screen.fill(WHITE)
 
             # Draw container
-            pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
+            # # pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
+            # container.draw()
+            pygame.gfxdraw.aacircle(screen, int(container.centre[0]), int(container.centre[1]), int(container.radius), RED)
 
             # Draw balls
             heatmap = draw_balls(screen, positions, velocities, colours, heatmap, active, show_angles)
 
             # Draw the grid onscreen (optional)
             if DRAW_GRID:
-                draw_grid(grid_counts)
+                draw_grid(screen, grid_counts)
 
             # Update the screen
             pygame.display.flip()
@@ -203,6 +210,43 @@ def main():
             clock.tick(MAX_TICK_RATE)
 
     pygame.quit()
+
+
+###################################################################################################
+
+@jitclass
+class Boundary:
+    anchor: typing.Tuple[float, float]
+    centre: typing.Tuple[float, float]
+    radius: float
+
+    def __init__(self):
+        self.centre = (WIDTH // 2, HEIGHT // 2)
+        self.anchor = self.centre
+        self.radius = RADIUS
+        # self.screen = screen
+
+    # def draw(self):
+    #     pygame.gfxdraw.aacircle(self.screen, int(self.centre[0]), int(self.centre[1]), int(self.radius), RED)
+
+    def is_valid_position(self, new_position, existing_positions, active, ball_radius):
+        for pos in existing_positions[:active]:
+            if norm(new_position - pos) < ball_radius:
+                return False
+        return norm(new_position - np.array([self.centre[0], self.centre[1]])) < self.radius - ball_radius
+    
+    def get_new_position(self, ball_radius):
+        return np.random.rand(2) * (2 * (self.radius - ball_radius)) + (self.centre[0] - self.radius + ball_radius)
+    
+    def distance_outside(self, position):
+        return np.sqrt((position[0] - self.centre[0]) ** 2 + (position[1] - self.centre[1]) ** 2) - self.radius
+
+    def is_outside(self, position, ball_radius):
+        return self.distance_outside(position) + ball_radius > 0
+    
+    def normal(self, position):
+        normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
+        return normal / (self.distance_outside(position) + self.radius)
 
 
 ###################################################################################################
@@ -217,21 +261,14 @@ def norm(a):
     return np.sqrt(a[0] * a[0] + a[1] * a[1])
 
 @njit(cache=NJIT_CACHE)
-def is_valid_position(new_position, existing_positions, active, ball_radius, radius):
-    for pos in existing_positions[:active]:
-        if norm(new_position - pos) < ball_radius:
-            return False
-    return norm(new_position - np.array([WIDTH//2, HEIGHT//2])) < radius - ball_radius
-
-@njit(cache=NJIT_CACHE)
-def initialize_positions(num_balls, width, radius, ball_radius):
+def initialize_positions(num_balls, ball_radius, container):
     positions_np = np.zeros((NUM_BALLS,2), dtype = np.float32)
     active = 0
     for _ in range(num_balls):
         attempts = 0
         while attempts < MAX_ATTEMPTS:
-            new_position = (np.random.rand(2)) * (2 * (radius - ball_radius)) + (width // 2 - radius + ball_radius)
-            if is_valid_position(new_position, positions_np, active, ball_radius, radius):
+            new_position = container.get_new_position(ball_radius)
+            if container.is_valid_position(new_position, positions_np, active, ball_radius):
                 positions_np[active,:] = new_position
                 active += 1
                 break
@@ -240,7 +277,7 @@ def initialize_positions(num_balls, width, radius, ball_radius):
             break
     return positions_np, active
 
-def draw_grid(grid_counts):
+def draw_grid(screen, grid_counts):
     for j in range(NUM_CELLS_Y):
         for i in range(NUM_CELLS_X):
             grid_colour = np.clip((255*grid_counts[i,j]//2, 0, (255*grid_counts[i,j]//2),128),0,255)
@@ -324,7 +361,7 @@ def reset_grid(grid_counts):
     grid_counts[:, :] = 0
 
 @njit(parallel=NJIT_PARALLEL, cache=NJIT_CACHE)
-def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, centre_pos, radius, colours, show_angles):
+def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, container, colours, show_angles):
 
     # Calculate velocity changes due to gravity and friction
     velocities[:, 1] += GRAVITY
@@ -347,14 +384,12 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
 
     # Calculate collisions with chamber walls
     for i in range(active):
-        dist = np.sqrt((positions[i, 0] - centre_pos[0]) ** 2 + (positions[i, 1] - centre_pos[1]) ** 2)
-        if dist + BALL_RADIUS > radius:
-            normal = np.array([positions[i, 0] - centre_pos[0], positions[i, 1] - centre_pos[1]])
-            normal /= dist
+        if container.is_outside(positions[i], BALL_RADIUS):
+            normal = container.normal(positions[i])
             vel_norm = dot(velocities[i], normal)
             velocities[i] -= 2 * vel_norm * normal * REST_COEFF
 
-            overlap = dist + BALL_RADIUS - radius
+            overlap = container.distance_outside(positions[i]) + BALL_RADIUS
             positions[i, 0] -= overlap * normal[0]
             positions[i, 1] -= overlap * normal[1]
 
