@@ -21,13 +21,14 @@ NJIT_CACHE = True
 PRINT_FPS = True
 ENFORCE_MAX_CALCULATION_FPS = False
 MAX_TICK_RATE = 50                          # Max tick rate for updating
+RENDER_INTERVAL = 1000 // 50                # Milliseconds per frame
 
 # Constants
 WIDTH, HEIGHT = 800, 800                    # On-screen window dimensions
-RADIUS = 400                                # Initial radius of the container
+BORDER = 30                                 # On-screen border width within window
 BALL_RADIUS = 12                            # Radius of the ball bearings
 NUM_BALLS = 5000                            # Maximum number of ball bearings
-GEN_BALLS = 700                             # How many balls to show at the beginning
+GEN_BALLS = 500                             # How many balls to show at the beginning
 MAX_ATTEMPTS = 100                          # How many attempts to try to place each ball before moving on to the next
 MAX_BALLS_PER_CELL = 10                     # Maximum number of balls that can be in one cell of the grid (arbitrary large number)
 DRAW_GRID = False                           # Draw the grid? It's slow
@@ -41,8 +42,8 @@ REPULSIVE_FORCE = BALLS_REPELL*0.85*1.0     # Strength of the repulsive force
 VIBRATION_AMPLITUDE = 1                     # Amplitude of the boundary vibration when switched on
 VIBRATION_FREQUENCY = 2                     # Frequency of the boundary vibration
 CAPTION = "Ball Bearing Simulation with NumPy and Numba"
-CAPTION_VIEWS = ("Hybrid view","Domains view","Defects and boundaries view","Heat map")
-NUM_VIEWS = 4
+CAPTION_VIEWS = ("Simple view", "Hybrid view","Domains view","Defects and boundaries view","Heat map")
+NUM_VIEWS = 5
 HEATMAP_DECAY = 0.9                         # Retention coefficient to define the time-constant of the heatmap smoothing filter
 HEATMAP_SLOPES = (40, 10, 200)              # The colour map gradient for each colour channel in order: RGB
 
@@ -66,7 +67,7 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption(CAPTION)
 
-    container = Boundary()
+    container = Boundary(radius=WIDTH//2 - BORDER)    # Initial radius of the container
 
     # State variables
     active = 0              # Number of balls being simulated and displayed
@@ -94,7 +95,6 @@ def main():
     running = True
     clock = pygame.time.Clock()
 
-    render_interval = 1000 // 30  # Milliseconds per frame
     last_render_time = pygame.time.get_ticks()-1
     last_calculation_time = last_render_time
 
@@ -175,7 +175,7 @@ def main():
         positions, velocities, colours = update_positions(positions, velocities, grid, grid_counts, GRID_SIZE, NUM_CELLS_X, NUM_CELLS_Y, active, current_time, container, colours, show_angles)
 
         # Accelerate performance by rendering the screen after several iterations of the calculations
-        if current_time - last_render_time >= render_interval:
+        if current_time - last_render_time >= RENDER_INTERVAL:
 
             # Calculate frames per second for the rendering
             try:
@@ -191,9 +191,7 @@ def main():
             screen.fill(WHITE)
 
             # Draw container
-            # # pygame.gfxdraw.aacircle(screen, int(vibrating_position[0]), int(vibrating_position[1]), int(vibrating_radius), RED)
-            # container.draw()
-            pygame.gfxdraw.aacircle(screen, int(container.centre[0]), int(container.centre[1]), int(container.radius), RED)
+            draw_boundary(screen, container)
 
             # Draw balls
             heatmap = draw_balls(screen, positions, velocities, colours, heatmap, active, show_angles)
@@ -214,39 +212,80 @@ def main():
 
 ###################################################################################################
 
+# @jitclass
+# class BoundaryCircle:
+#     anchor: typing.Tuple[float, float]
+#     centre: typing.Tuple[float, float]
+#     radius: float
+
+#     def __init__(self, radius):
+#         self.centre = (WIDTH // 2, HEIGHT // 2)
+#         self.anchor = self.centre
+#         self.radius = radius
+
+#     def is_valid_position(self, new_position, existing_positions, active, ball_radius):
+#         for pos in existing_positions[:active]:
+#             if norm(new_position - pos) < ball_radius:
+#                 return False
+#         return norm(new_position - np.array([self.centre[0], self.centre[1]])) < self.radius - ball_radius
+#         # return norm((new_position[0] - self.centre[0],new_position[1] - self.centre[1])) < self.radius - ball_radius
+    
+#     def get_new_position(self, ball_radius):
+#         return np.random.rand(2) * (2 * (self.radius - ball_radius)) + (self.centre[0] - self.radius + ball_radius)
+    
+#     def distance_outside(self, position):
+#         return np.sqrt((position[0] - self.centre[0]) ** 2 + (position[1] - self.centre[1]) ** 2) - self.radius
+
+#     def is_outside(self, position, ball_radius):
+#         return self.distance_outside(position) + ball_radius > 0
+    
+#     def normal(self, position):
+#         normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
+#         return normal / (self.distance_outside(position) + self.radius)
+
+
+# def draw_boundary(screen, bound):
+#     pygame.gfxdraw.aacircle(screen, int(bound.centre[0]), int(bound.centre[1]), int(bound.radius), RED)
+
+# Try a square boundary
 @jitclass
 class Boundary:
     anchor: typing.Tuple[float, float]
     centre: typing.Tuple[float, float]
     radius: float
 
-    def __init__(self):
+    def __init__(self, radius):
         self.centre = (WIDTH // 2, HEIGHT // 2)
         self.anchor = self.centre
-        self.radius = RADIUS
-        # self.screen = screen
-
-    # def draw(self):
-    #     pygame.gfxdraw.aacircle(self.screen, int(self.centre[0]), int(self.centre[1]), int(self.radius), RED)
-
+        self.radius = radius
+    
     def is_valid_position(self, new_position, existing_positions, active, ball_radius):
         for pos in existing_positions[:active]:
-            if norm(new_position - pos) < ball_radius:
+            if norm((new_position[0] - pos[0],new_position[1] - pos[1])) < ball_radius:
                 return False
-        return norm(new_position - np.array([self.centre[0], self.centre[1]])) < self.radius - ball_radius
+        return not self.is_outside(new_position, ball_radius)
     
     def get_new_position(self, ball_radius):
         return np.random.rand(2) * (2 * (self.radius - ball_radius)) + (self.centre[0] - self.radius + ball_radius)
     
     def distance_outside(self, position):
-        return np.sqrt((position[0] - self.centre[0]) ** 2 + (position[1] - self.centre[1]) ** 2) - self.radius
+        vector_outside = np.maximum(abs(position[0] - self.centre[0]),abs(position[1] - self.centre[1]))
+        # print(vector_outside - self.radius)
+        return vector_outside - self.radius
 
     def is_outside(self, position, ball_radius):
+        #return (ball_radius - self.radius < (self.centre[0] - position[0]) < self.radius - ball_radius) and (ball_radius - self.radius < (self.centre[1] - position[1]) < self.radius - ball_radius)
+        # print(self.distance_outside(position) + ball_radius > 0)
         return self.distance_outside(position) + ball_radius > 0
     
     def normal(self, position):
         normal = np.array([position[0] - self.centre[0], position[1] - self.centre[1]])
         return normal / (self.distance_outside(position) + self.radius)
+
+
+def draw_boundary(screen, bound):
+    rectangle = pygame.Rect(bound.centre[0]-bound.radius, bound.centre[1]-bound.radius, 2*bound.radius, 2*bound.radius)
+    pygame.gfxdraw.rectangle(screen, rectangle, RED)
 
 
 ###################################################################################################
@@ -285,7 +324,7 @@ def draw_grid(screen, grid_counts):
 
 def draw_balls(screen, positions, velocities, colours, heatmap, active, show_angles):
     # For displaying the heatmap view:
-    if show_angles == 3:
+    if show_angles == 4:
         # Calculate a rolling average for the heatmap
         heatmap[:active] = HEATMAP_DECAY * heatmap[:active] + np.sum(velocities[:active,:]**2, axis=1)
         # Calculate ball colour scheme
@@ -297,16 +336,19 @@ def draw_balls(screen, positions, velocities, colours, heatmap, active, show_ang
     for idx, pos in enumerate(positions[:active]):
         # Draw the fill of each ball dependent on view being displayed
         if show_angles == 0:
+            # Simple view with no colour mapping
+            pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (0,0,127))
+        if show_angles == 1:
             # "Hybrid" view of distance and angle combined
             # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],colours[idx,0]))
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (colours[idx,0],colours[idx,1],255-colours[idx,0]))
-        elif show_angles == 1:
+        elif show_angles == 2:
             # Mean nearest six neighbour distance
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,0],200-(colours[idx,0]*200)//255,255))
-        elif show_angles == 2:
+        elif show_angles == 3:
             # Crystal plane angle
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (255-colours[idx,1],200-(colours[idx,1]*200)//255,255))
-        elif show_angles == 3:
+        elif show_angles == 4:
             # Heat map
             # pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapB[idx]),0,255-int(heatmapB[idx])))
             pygame.gfxdraw.filled_circle(screen, int(pos[0]), int(pos[1]), BALL_RADIUS, (int(heatmapR[idx]),int(heatmapG[idx]),int(heatmapB[idx])))
@@ -362,7 +404,6 @@ def reset_grid(grid_counts):
 
 @njit(parallel=NJIT_PARALLEL, cache=NJIT_CACHE)
 def update_positions(positions, velocities, grid, grid_counts, grid_size, num_cells_x, num_cells_y, active, time, container, colours, show_angles):
-
     # Calculate velocity changes due to gravity and friction
     velocities[:, 1] += GRAVITY
     velocities *= FRICTION
@@ -412,7 +453,9 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                     ball2 = grid[i, j, l]
                     dx = positions[ball2, 0] - positions[ball1, 0]
                     dy = positions[ball2, 1] - positions[ball1, 1]
-                    distance = np.sqrt(dx ** 2 + dy ** 2)
+                    # (dx, dy) = positions[ball2] - positions[ball1]      # TEN TIMES SLOWER!?
+                    distance = norm((dx,dy))
+                    
                     distances.append(distance)
                     angles.append(np.mod(np.arctan2(dx,dy),np.pi/3))
 
@@ -433,7 +476,9 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                             ball2 = grid[nx, ny, l]
                             dx = positions[ball2, 0] - positions[ball1, 0]
                             dy = positions[ball2, 1] - positions[ball1, 1]
-                            distance = np.sqrt(dx ** 2 + dy ** 2)
+                            # (dx, dy) = positions[ball2] - positions[ball1]      # TEN TIMES SLOWER!?
+                            distance = norm((dx,dy))
+                    
                             distances.append(distance)
                             angles.append(np.mod(np.arctan2(dx,dy),np.pi/3))
 
@@ -445,6 +490,8 @@ def update_positions(positions, velocities, grid, grid_counts, grid_size, num_ce
                                 velocities[ball1], velocities[ball2] = apply_repulsive_force(
                                     positions[ball1], positions[ball2], velocities[ball1], velocities[ball2], REPULSIVE_FORCE
                                 )
+
+                # Normalise the angles and use them as a method of colouring in the balls
                 if len(angles) > 0:
                     colours[ball1,0] = sum(angles) / len(angles)
                 else:
